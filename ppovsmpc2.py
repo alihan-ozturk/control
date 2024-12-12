@@ -396,8 +396,7 @@ class MPCGameEnv:
     
     def _compute_reward(self):
         # Calculate distance between agent and MPC
-        distance_from_mpc = np.sqrt((self.x_agent[0] - self.x_mpc[0])**2 + 
-                                  (self.x_agent[1] - self.x_mpc[1])**2)
+        distance_from_mpc = np.sqrt(np.square(self.x_mpc[:2]-self.x_agent[:2]).sum())
         
         # Calculate distance from origin
         distance_from_origin = np.sqrt(self.x_agent[0]**2 + self.x_agent[1]**2)
