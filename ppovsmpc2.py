@@ -238,8 +238,8 @@ class MPCGameEnv:
         self.x_mpc = np.zeros(5)
         
         # MPC parameters
-        self.Q = np.diag([1, 1, 0.1, 0.001, 0.001])
-        self.R = np.diag([0.0001, 0.01])
+        self.Q = np.diag([1, 1, 0.5, 0.0001, 0.0001])
+        self.R = np.diag([0.00001, 0.001])
         self.horizon = 10
         self.u_guess = 0
         self.max_distance = 30  # Maximum allowed distance from origin
@@ -455,5 +455,5 @@ class MPCGameEnv:
 
 if __name__ == "__main__":
     # Train the PPO agent with visualization every 50 episodes
-    trained_agent, rewards_history = train_ppo_with_replay(vis_interval=2)
+    trained_agent, rewards_history = train_ppo_with_replay(vis_interval=1)
     pygame.quit()
