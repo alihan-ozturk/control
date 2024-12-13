@@ -191,8 +191,10 @@ def train_ppo_with_replay(vis_interval=50):
         if episode % 10 == 0:
             print(f"Episode {episode}, Average Reward: {np.mean(episode_rewards):.2f}")
 
-    # Clean up visualization after all training is done
-    pygame.quit()
+        # Clean up visualization after all training is done
+        if episode % vis_interval == 0:
+            pygame.quit()
+            pygame.init()  # Reinitialize for next visualization
 
     return agent, episode_rewards_history
 
