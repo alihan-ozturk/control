@@ -8,6 +8,7 @@ from scipy.linalg import expm
 import cvxpy as cp
 from collections import deque
 import math
+import cv2
 
 def compute_gae(rewards, values, next_value, dones, gamma=0.99, lam=0.95):
     advantages = []
@@ -239,12 +240,13 @@ class MPCGameEnv:
         
         # MPC parameters
         self.Q = np.diag([1, 1, 0.5, 0.0001, 0.0001])
-        self.R = np.diag([0.00001, 0.001])
+        self.R = np.diag([0.00001, 0.01])
         self.horizon = 10
         self.u_guess = 0
         self.max_distance = 30  # Maximum allowed distance from origin
         self.collision_threshold = 1  # Distance at which collision occurs
         self.warning_distance = 5  # Distance at which warning reward is given
+        self.video_counter = 0
         
         # Visualization setup
         self.visualize = visualize
@@ -257,6 +259,21 @@ class MPCGameEnv:
         self.screen = pygame.display.set_mode((self.WIDTH, self.HEIGHT))
         pygame.display.set_caption("PPO vs MPC Vehicle")
         self.font = pygame.font.SysFont('Arial', 16)
+        
+        # Video recording setup
+        self.recording = False
+        self.video_writer = None
+        
+        if self.recording:
+            
+            fourcc = cv2.VideoWriter_fourcc(*'XVID')
+            self.video_writer = cv2.VideoWriter(
+                f'ppo_vs_mpc{self.video_counter}.avi',
+                fourcc,
+                20.0,  # FPS
+                (self.WIDTH, self.HEIGHT)
+            )
+            self.video_counter += 1
         
         # Colors
         self.WHITE = (255, 255, 255)
@@ -369,6 +386,12 @@ class MPCGameEnv:
         pygame.draw.line(self.screen, self.BLUE, (mpc_x, mpc_y), 
                         (mpc_heading_x, mpc_heading_y), 2)
         
+        # Display legend
+        pygame.draw.circle(self.screen, self.RED, (50, 550), 5)
+        self.draw_text("PPO Agent", (60, 545), self.RED)
+        pygame.draw.circle(self.screen, self.BLUE, (150, 550), 5)
+        self.draw_text("MPC Vehicle", (160, 545), self.BLUE)
+        
         # Display states
         self.draw_text(f"PPO Agent State:", (10, 10))
         self.draw_text(f"X: {self.x_agent[0]:.2f}, Y: {self.x_agent[1]:.2f}", (10, 30))
@@ -381,6 +404,19 @@ class MPCGameEnv:
                       (self.WIDTH - 200, 50))
         
         pygame.display.flip()
+        
+        # Capture screen for video recording
+        if self.recording:
+            frame = pygame.surfarray.array3d(self.screen)  # Get screen buffer
+            frame = np.transpose(frame, (1, 0, 2))  # Transpose to match OpenCV format
+            self.video_writer.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
+
+    def close(self):
+        # Close the video writer if recording
+        if self.recording and self.video_writer:
+            self.video_writer.release()
+            self.video_writer = None
+        pygame.quit()
 
     def _get_state(self):
         # Combine agent and MPC states into observation
@@ -400,7 +436,7 @@ class MPCGameEnv:
         # Check boundary conditions first
         if distance_from_origin > self.max_distance:
             
-            reward = -1
+            reward = -100
             done = True
             return reward, done
             
@@ -412,7 +448,7 @@ class MPCGameEnv:
         
         # Collision check
         if distance_from_mpc < self.collision_threshold:
-            reward -= 1
+            reward -= 100
             done = True
         # Warning zone
         elif distance_from_mpc < self.warning_distance:
@@ -455,5 +491,5 @@ class MPCGameEnv:
 
 if __name__ == "__main__":
     # Train the PPO agent with visualization every 50 episodes
-    trained_agent, rewards_history = train_ppo_with_replay(vis_interval=1)
+    trained_agent, rewards_history = train_ppo_with_replay(vis_interval=50)
     pygame.quit()
