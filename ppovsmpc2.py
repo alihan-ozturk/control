@@ -161,6 +161,9 @@ def train_ppo_with_replay(vis_interval=50):
         state = env.reset()
         episode_rewards = []
 
+        if episode % vis_interval == 0:
+            env.init_vis()  # Reinitialize for next visualization
+
         for step in range(max_steps):
             state_tensor = torch.FloatTensor(state).unsqueeze(0)
             action, log_prob, _ = agent.network.get_action(state_tensor)
@@ -194,7 +197,7 @@ def train_ppo_with_replay(vis_interval=50):
         # Clean up visualization after all training is done
         if episode % vis_interval == 0:
             pygame.quit()
-            pygame.init()  # Reinitialize for next visualization
+            
 
     return agent, episode_rewards_history
 
@@ -246,25 +249,28 @@ class MPCGameEnv:
         # Visualization setup
         self.visualize = visualize
         if visualize:
-            pygame.init()
-            self.WIDTH, self.HEIGHT = 600, 600
-            self.screen = pygame.display.set_mode((self.WIDTH, self.HEIGHT))
-            pygame.display.set_caption("PPO vs MPC Vehicle")
-            self.font = pygame.font.SysFont('Arial', 16)
-            
-            # Colors
-            self.WHITE = (255, 255, 255)
-            self.BLACK = (0, 0, 0)
-            self.RED = (255, 0, 0)
-            self.BLUE = (0, 0, 255)
-            self.GREEN = (0, 255, 0)
-            self.GRAY = (200, 200, 200)
-            self.LIGHT_RED = (255, 200, 200)
-            
-            # Track history
-            self.agent_history = []
-            self.mpc_history = []
+            self.init_vis()
     
+    def init_vis(self):
+        pygame.init()
+        self.WIDTH, self.HEIGHT = 600, 600
+        self.screen = pygame.display.set_mode((self.WIDTH, self.HEIGHT))
+        pygame.display.set_caption("PPO vs MPC Vehicle")
+        self.font = pygame.font.SysFont('Arial', 16)
+        
+        # Colors
+        self.WHITE = (255, 255, 255)
+        self.BLACK = (0, 0, 0)
+        self.RED = (255, 0, 0)
+        self.BLUE = (0, 0, 255)
+        self.GREEN = (0, 255, 0)
+        self.GRAY = (200, 200, 200)
+        self.LIGHT_RED = (255, 200, 200)
+        
+        # Track history
+        self.agent_history = []
+        self.mpc_history = []
+
     def _get_mpc_action(self):
         # Simplified MPC controller from your original code
         A, B = get_linear_matrices(self.x_mpc[2], self.x_mpc[3], self.x_mpc[4], self.u_guess, self.friction_coefficient)
@@ -449,5 +455,5 @@ class MPCGameEnv:
 
 if __name__ == "__main__":
     # Train the PPO agent with visualization every 50 episodes
-    trained_agent, rewards_history = train_ppo_with_replay(vis_interval=1)
+    trained_agent, rewards_history = train_ppo_with_replay(vis_interval=2)
     pygame.quit()
