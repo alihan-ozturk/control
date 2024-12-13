@@ -146,7 +146,7 @@ class PPOAgentWithReplay(PPOAgent):
 
 
 def train_ppo_with_replay(vis_interval=50):
-    env = MPCGameEnv(visualize=False)  # Start without visualization
+    env = MPCGameEnv(visualize=True)
     state_dim = 10  # Combined agent and MPC states
     action_dim = 2  # Same as original control inputs
 
@@ -158,12 +158,6 @@ def train_ppo_with_replay(vis_interval=50):
     episode_rewards_history = []
 
     for episode in range(max_episodes):
-        # Create visualization environment for specific episodes
-        if episode % vis_interval == 0:
-            vis_env = MPCGameEnv(visualize=True)
-            vis_state = vis_env.reset()
-
-        # Regular training environment
         state = env.reset()
         episode_rewards = []
 
@@ -179,15 +173,8 @@ def train_ppo_with_replay(vis_interval=50):
 
             # If this is a visualization episode, also step the visualization environment
             if episode % vis_interval == 0:
-                vis_state_tensor = torch.FloatTensor(vis_state).unsqueeze(0)
-                vis_action, _, _ = agent.network.get_action(vis_state_tensor)
-                vis_next_state, _, vis_done, _ = vis_env.step(vis_action.detach().numpy()[0])
-                vis_env.render()
+                env.render()
                 pygame.time.wait(50)  # Add delay to make visualization visible
-                vis_state = vis_next_state
-
-                if vis_done:
-                    break
 
             episode_rewards.append(reward)
             state = next_state
@@ -204,10 +191,8 @@ def train_ppo_with_replay(vis_interval=50):
         if episode % 10 == 0:
             print(f"Episode {episode}, Average Reward: {np.mean(episode_rewards):.2f}")
 
-        # Clean up visualization
-        if episode % vis_interval == 0:
-            pygame.quit()
-            pygame.init()  # Reinitialize for next visualization
+    # Clean up visualization after all training is done
+    pygame.quit()
 
     return agent, episode_rewards_history
 
@@ -244,12 +229,11 @@ class MPCGameEnv:
         # Initialize parameters
         self.dt = 0.1
         self.friction_coefficient = 1
-        self.x_agent = np.array([np.random.uniform(-10, -5), np.random.uniform(-10, -5),
-                                np.random.uniform(-np.pi, np.pi), 1, 0.0])
-        self.x_mpc = np.array([10, 10, -self.x_agent[2], 1, 0.0])
+        self.x_agent = np.zeros(5)
+        self.x_mpc = np.zeros(5)
         
         # MPC parameters
-        self.Q = np.diag([0.1, 0.1, 1, 0.001, 0.001])
+        self.Q = np.diag([1, 1, 0.1, 0.001, 0.001])
         self.R = np.diag([0.0001, 0.01])
         self.horizon = 10
         self.u_guess = 0
@@ -261,7 +245,7 @@ class MPCGameEnv:
         self.visualize = visualize
         if visualize:
             pygame.init()
-            self.WIDTH, self.HEIGHT = 800, 600
+            self.WIDTH, self.HEIGHT = 600, 600
             self.screen = pygame.display.set_mode((self.WIDTH, self.HEIGHT))
             pygame.display.set_caption("PPO vs MPC Vehicle")
             self.font = pygame.font.SysFont('Arial', 16)
@@ -399,7 +383,7 @@ class MPCGameEnv:
         distance_from_mpc = np.sqrt(np.square(self.x_mpc[:2]-self.x_agent[:2]).sum())
         
         # Calculate distance from origin
-        distance_from_origin = np.sqrt(self.x_agent[0]**2 + self.x_agent[1]**2)
+        distance_from_origin = np.sqrt(np.square(self.x_agent[:2]).sum())
         
         # Initialize reward and done flag
         reward = 0
@@ -432,14 +416,16 @@ class MPCGameEnv:
         return reward, done
     
     def step(self, action):
-        # Update MPC
-        u_mpc = self._get_mpc_action()
-        next_mpc_state = self.x_mpc + self.dt * state_space_model(self.x_mpc, u_mpc, self.friction_coefficient)
 
         # Apply PPO action to agent
         action = np.clip(action, [-10, -np.pi], [10, np.pi])
         next_agent_state = self.x_agent + self.dt * state_space_model(self.x_agent, action, self.friction_coefficient)
-        
+
+        # Update MPC
+        u_mpc = self._get_mpc_action()
+        u_mpc = np.clip(u_mpc, [-10, -np.pi], [10, np.pi])
+        next_mpc_state = self.x_mpc + self.dt * state_space_model(self.x_mpc, u_mpc, self.friction_coefficient)
+
         # Update states
         self.x_mpc = next_mpc_state
         self.x_agent = next_agent_state
@@ -453,94 +439,13 @@ class MPCGameEnv:
         
         # Update MPC guess only if not done
         if not done:
-            self.u_guess = u_mpc[0]
+            self.u_guess = u_mpc[1]
         else:
             self.u_guess = 0
         
         return self._get_state(), reward, done, {}
 
-def train_ppo(vis_interval=50):
-    env = MPCGameEnv(visualize=False)  # Start without visualization
-    state_dim = 10  # Combined agent and MPC states
-    action_dim = 2  # Same as original control inputs
-    
-    agent = PPOAgent(state_dim, action_dim)
-    max_episodes = 1000
-    max_steps = 500
-    
-    # Training metrics
-    episode_rewards_history = []
-    
-    for episode in range(max_episodes):
-        # Create visualization environment for specific episodes
-        if episode % vis_interval == 0:
-            vis_env = MPCGameEnv(visualize=True)
-            vis_state = vis_env.reset()
-        
-        # Regular training environment
-        state = env.reset()
-        episode_rewards = []
-        states = []
-        actions = []
-        log_probs = []
-        values = []
-        dones = []
-        
-        for step in range(max_steps):
-            state_tensor = torch.FloatTensor(state).unsqueeze(0)
-            action, log_prob, value = agent.network.get_action(state_tensor)
-            
-            # Take step in training environment
-            next_state, reward, done, _ = env.step(action.detach().numpy()[0])
-
-            
-            # If this is a visualization episode, also step the visualization environment
-            if episode % vis_interval == 0:
-                vis_state_tensor = torch.FloatTensor(vis_state).unsqueeze(0)
-                vis_action, _, _ = agent.network.get_action(vis_state_tensor)
-                vis_next_state, _, vis_done, _ = vis_env.step(vis_action.detach().numpy()[0])
-                vis_env.render()
-                pygame.time.wait(50)  # Add delay to make visualization visible
-                vis_state = vis_next_state
-                
-                if vis_done:
-                    break
-            
-            # Store transition
-            states.append(state)
-            actions.append(action.detach().numpy()[0])
-            log_probs.append(log_prob.detach())
-            values.append(value)
-            dones.append(done)
-            episode_rewards.append(reward)
-            
-            state = next_state
-            
-            if done:
-                break
-        
-        # Calculate returns and advantages
-        next_state_tensor = torch.FloatTensor(next_state).unsqueeze(0)
-        _, _, next_value = agent.network(next_state_tensor)
-        returns, advantages = compute_gae(episode_rewards, values, next_value, dones)
-        
-        # Update PPO agent
-        agent.update(states, actions, log_probs, returns, advantages)
-        
-        # Store metrics
-        episode_rewards_history.append(np.mean(episode_rewards))
-        
-        if episode % 10 == 0:
-            print(f"Episode {episode}, Average Reward: {np.mean(episode_rewards):.2f}")
-            
-        # Clean up visualization
-        if episode % vis_interval == 0:
-            pygame.quit()
-            pygame.init()  # Reinitialize for next visualization
-    
-    return agent, episode_rewards_history
-
 if __name__ == "__main__":
     # Train the PPO agent with visualization every 50 episodes
-    trained_agent, rewards_history = train_ppo_with_replay(vis_interval=50)
+    trained_agent, rewards_history = train_ppo_with_replay(vis_interval=1)
     pygame.quit()
