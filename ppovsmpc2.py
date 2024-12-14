@@ -36,18 +36,18 @@ class PPONetwork(nn.Module):
         
         # Actor network (policy)
         self.actor = nn.Sequential(
-            nn.Linear(state_dim, 64),
+            nn.Linear(state_dim, 128),
             nn.ReLU(),
-            nn.Linear(64, 64),
+            nn.Linear(128, 64),
             nn.ReLU(),
             nn.Linear(64, action_dim * 2)  # Mean and std for each action
         )
         
         # Critic network (value function)
         self.critic = nn.Sequential(
-            nn.Linear(state_dim, 64),
+            nn.Linear(state_dim, 128),
             nn.ReLU(),
-            nn.Linear(64, 64),
+            nn.Linear(128, 64),
             nn.ReLU(),
             nn.Linear(64, 1)
         )
@@ -70,7 +70,7 @@ class PPONetwork(nn.Module):
         return action, log_prob, value
 
 class PPOAgent:
-    def __init__(self, state_dim, action_dim, lr=3e-4, gamma=0.99, epsilon=0.2, c1=1.0, c2=0.01):
+    def __init__(self, state_dim, action_dim, lr=3e-4, gamma=0.99, epsilon=0.2, c1=1.0, c2=0.001):
         self.network = PPONetwork(state_dim, action_dim)
         self.optimizer = torch.optim.Adam(self.network.parameters(), lr=lr)
         self.gamma = gamma
@@ -159,6 +159,7 @@ def train_ppo_with_replay(vis_interval=50):
     episode_rewards_history = []
 
     for episode in range(max_episodes):
+        env.update_weights_randomly(epoch=episode, interval=50)
         state = env.reset()
         episode_rewards = []
 
@@ -180,7 +181,7 @@ def train_ppo_with_replay(vis_interval=50):
                 env.render()
                 pygame.time.wait(50)  # Add delay to make visualization visible
 
-            episode_rewards.append(reward)
+            episode_rewards.append(reward*agent.gamma**(step+1))
             state = next_state
 
             if done:
@@ -190,11 +191,10 @@ def train_ppo_with_replay(vis_interval=50):
         agent.update_from_replay_buffer()
 
         # Store metrics
-        episode_rewards_history.append(np.mean(episode_rewards))
+        episode_rewards_history.append(np.sum(episode_rewards))
 
         if episode % 10 == 0:
-            print(f"Episode {episode}, Average Reward: {np.mean(episode_rewards):.2f}")
-
+            print(f"Episode {episode}, Sum Reward: {np.mean(episode_rewards):.2f}")
         # Clean up visualization after all training is done
         if episode % vis_interval == 0:
             pygame.quit()
@@ -237,21 +237,36 @@ class MPCGameEnv:
         self.friction_coefficient = 1
         self.x_agent = np.zeros(5)
         self.x_mpc = np.zeros(5)
-        
+
         # MPC parameters
         self.Q = np.diag([1, 1, 0.5, 0.0001, 0.0001])
         self.R = np.diag([0.00001, 0.01])
         self.horizon = 10
         self.u_guess = 0
-        self.max_distance = 30  # Maximum allowed distance from origin
-        self.collision_threshold = 1  # Distance at which collision occurs
-        self.warning_distance = 5  # Distance at which warning reward is given
+        self.max_distance = 30
+        self.visualize = visualize
         self.video_counter = 0
+
+        if visualize:
+            self.init_vis()
+        self.collision_threshold = 1.5  # Distance at which collision occurs
+        
         
         # Visualization setup
         self.visualize = visualize
         if visualize:
             self.init_vis()
+            self.WHITE = (255, 255, 255)
+            self.BLACK = (0, 0, 0)
+            self.RED = (255, 0, 0)
+            self.BLUE = (0, 0, 255)
+            self.GREEN = (0, 255, 0)
+            self.GRAY = (200, 200, 200)
+            self.LIGHT_RED = (255, 200, 200)
+            
+            # Track history
+            self.agent_history = []
+            self.mpc_history = []
     
     def init_vis(self):
         pygame.init()
@@ -261,7 +276,7 @@ class MPCGameEnv:
         self.font = pygame.font.SysFont('Arial', 16)
         
         # Video recording setup
-        self.recording = False
+        self.recording = True
         self.video_writer = None
         
         if self.recording:
@@ -274,19 +289,24 @@ class MPCGameEnv:
                 (self.WIDTH, self.HEIGHT)
             )
             self.video_counter += 1
-        
-        # Colors
-        self.WHITE = (255, 255, 255)
-        self.BLACK = (0, 0, 0)
-        self.RED = (255, 0, 0)
-        self.BLUE = (0, 0, 255)
-        self.GREEN = (0, 255, 0)
-        self.GRAY = (200, 200, 200)
-        self.LIGHT_RED = (255, 200, 200)
-        
-        # Track history
-        self.agent_history = []
-        self.mpc_history = []
+
+    def update_weights_randomly(self, epoch, interval=50):
+        """
+        Randomly update Q and R weights every `interval` epochs.
+        Values are generated closer to 0 using an exponential or Beta distribution.
+        """
+        if epoch % interval == 0:
+            # Generate new weights using an exponential distribution
+            q_weights = 1 - np.random.exponential(scale=0.15, size=5)
+            r_weights = np.random.exponential(scale=0.01, size=2)
+
+            # Scale weights to desired range (optional)
+            q_weights = np.clip(q_weights, 0, 1) * np.array([100, 100, 0, 1, 1])
+            r_weights = np.clip(r_weights, 0, 1)
+
+            # Update Q and R matrices
+            self.Q = np.diag(q_weights) 
+            self.R = np.diag(r_weights)
 
     def _get_mpc_action(self):
         # Simplified MPC controller from your original code
@@ -306,7 +326,8 @@ class MPCGameEnv:
         for t in range(self.horizon):
             cost += cp.quad_form(x_var[:, t] - x_ref, self.Q) + cp.quad_form(u_var[:, t], self.R)
             constraints += [x_var[:, t + 1] == A_d @ x_var[:, t] + B_d @ u_var[:, t]]
-            constraints += [cp.abs(u_var[0, t]) <= 10]
+            constraints += [u_var[0, t] <= 10]
+            constraints += [u_var[0, t] >= -2]
             constraints += [cp.abs(u_var[1, t]) <= np.pi]
         
         prob = cp.Problem(cp.Minimize(cost), constraints)
@@ -423,51 +444,30 @@ class MPCGameEnv:
         return np.concatenate([self.x_agent, self.x_mpc])
     
     def _compute_reward(self):
-        # Calculate distance between agent and MPC
-        distance_from_mpc = np.sqrt(np.square(self.x_mpc[:2]-self.x_agent[:2]).sum())
-        
-        # Calculate distance from origin
-        distance_from_origin = np.sqrt(np.square(self.x_agent[:2]).sum())
-        
-        # Initialize reward and done flag
-        reward = 0
-        done = False
-        
-        # Check boundary conditions first
+        distance_from_origin = np.linalg.norm(self.x_agent[:2])
+        distance_from_mpc = np.linalg.norm(self.x_mpc[:2] - self.x_agent[:2])
+
         if distance_from_origin > self.max_distance:
-            
             reward = -100
             done = True
-            return reward, done
-            
-        # Base reward for staying in bounds
-        if distance_from_origin < 20:
-            reward += 0.1
-        else:
-            reward -= 0.05  # Smaller penalty for being near the boundary
-        
-        # Collision check
-        if distance_from_mpc < self.collision_threshold:
-            reward -= 100
+        elif distance_from_mpc < self.collision_threshold:
+            reward = -100
             done = True
-        # Warning zone
-        elif distance_from_mpc < self.warning_distance:
-            reward -= 0.1 * (1 - distance_from_mpc/self.warning_distance)  # Graduated penalty
         else:
-            # Small reward for maintaining safe distance
-            reward += 0.05
+            reward = 0
+            done = False
         
         return reward, done
     
     def step(self, action):
 
         # Apply PPO action to agent
-        action = np.clip(action, [-10, -np.pi], [10, np.pi])
+        action = np.clip(action, [-2, -np.pi], [10, np.pi])
         next_agent_state = self.x_agent + self.dt * state_space_model(self.x_agent, action, self.friction_coefficient)
 
         # Update MPC
         u_mpc = self._get_mpc_action()
-        u_mpc = np.clip(u_mpc, [-10, -np.pi], [10, np.pi])
+        u_mpc = np.clip(u_mpc, [-2, -np.pi], [10, np.pi])
         next_mpc_state = self.x_mpc + self.dt * state_space_model(self.x_mpc, u_mpc, self.friction_coefficient)
 
         # Update states
@@ -491,5 +491,5 @@ class MPCGameEnv:
 
 if __name__ == "__main__":
     # Train the PPO agent with visualization every 50 episodes
-    trained_agent, rewards_history = train_ppo_with_replay(vis_interval=50)
+    trained_agent, rewards_history = train_ppo_with_replay(vis_interval=200)
     pygame.quit()
